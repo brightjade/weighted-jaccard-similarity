@@ -224,8 +224,8 @@ if __name__ == "__main__":
         prediction = []
         f.write(f"Valid Label: {ground_truth}\n")
         for t_idx, true_sim in sorted(sim_list, key=lambda tup: tup[1], reverse=True)[:5]:
-            if true_sim > 0.5:
-            f.write(f"Pred: {train_doc2labels[t_idx]}\tSim: {true_sim}\n")
+            if true_sim >= 0.5:
+                f.write(f"Pred: {train_doc2labels[t_idx]}\tSim: {true_sim}\n")
                 prediction += train_doc2labels[t_idx]
 
         if len(prediction) == 0:
