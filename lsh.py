@@ -76,7 +76,7 @@ def jaccard_similarity(s1, s2):
 
 
 def get_shingles(K):
-    """Get all K-shingles in the training files.
+    """Get all K-shingles in the training & validation files.
 
     Args:
         K (int): length of shingle
@@ -85,12 +85,20 @@ def get_shingles(K):
         shingles (set): set of all shingles in documents
     """
     shingles = set()
-    for f in tqdm(os.listdir("./train"), desc='Shingling documents'):        
+
+    for f in tqdm(os.listdir("./train"), desc='Shingling training documents'):        
         with open(os.path.join("./train", f), "r") as tsv:
             tsv_reader = csv.reader(tsv, delimiter='\t')
             for row in tsv_reader:
                 # Get first K items from (src_id, dst_id, port_num, timestamp, con_type)
                 shingles.add(tuple(row[:K]))
+
+    for f in tqdm(os.listdir("./valid_query"), desc='Shingling valiation documents'):
+        with open(os.path.join("./valid_query", f), "r") as tsv:
+            tsv_reader = csv.reader(tsv, delimiter='\t')
+            for row in tsv_reader:
+                shingles.add(tuple(row[:K]))
+                
     return shingles
 
 
@@ -104,7 +112,10 @@ def build_doc2shingles(shingles, K):
     Returns:
         doc2shingles (dict): dictionary mapping each document to a list of shingles
     """
-    doc2shingles = defaultdict(list)
+    train_doc2shingles = defaultdict(list)
+    valid_doc2shingles = defaultdict(list)
+    train_doc2labels = {}
+    valid_doc2labels = {}
     shingle2idx = {}
 
     # shingle2idx = {shingle0: 0, shingle1: 1, ...}
@@ -112,20 +123,42 @@ def build_doc2shingles(shingles, K):
         shingle2idx[shingle] = idx
     
     # doc2shingles = {doc_idx0: list of shingles, ...}
-    for idx, f in enumerate(tqdm(os.listdir("./train"), desc='Building doc2shingles')):
+    for idx, f in enumerate(tqdm(os.listdir("./train"), desc='Building training doc2shingles')):
+        labels = set()
         with open(os.path.join("./train", f), "r") as tsv:
             tsv_reader = csv.reader(tsv, delimiter='\t')
             for row in tsv_reader:
-                doc2shingles[idx].append(shingle2idx[tuple(row[:K])])
+                train_doc2shingles[idx].append(shingle2idx[tuple(row[:K])])
+                labels.add(row[-1])
+        
+        # doc2labels = {doc_idx0: list of labels, ...}
+        if len(labels) > 1:     # if bad connection exists, we don't care about benign connection
+            labels.remove('-')
+        train_doc2labels[idx] = list(labels)
+    
+    for idx, f in enumerate(tqdm(os.listdir("./valid_query"), desc='Building validation doc2shingles')):
+        with open(os.path.join("./valid_query", f), "r") as tsv:
+            tsv_reader = csv.reader(tsv, delimiter='\t')
+            for row in tsv_reader:
+                valid_doc2shingles[idx].append(shingle2idx[tuple(row[:K])])
+    
+    for idx, f in enumerate(os.listdir("./valid_answer")):
+        if os.stat(os.path.join('./valid_answer', f)).st_size == 0: # if file is empty, label is 'benign' connection.
+            valid_doc2labels[idx] = ['-']
+        else:
+            with open(os.path.join("./valid_answer", f), "r") as tsv:
+                tsv_reader = csv.reader(tsv, delimiter='\t')
+                for row in tsv_reader:
+                    valid_doc2labels[idx] = row
 
-    return doc2shingles
+    return train_doc2shingles, train_doc2labels, valid_doc2shingles, valid_doc2labels
 
 
 def min_hash(doc2shingles, hash_functions):
     """Compute Min-Hashing to create signatures for documents.
 
     Args:
-        doc2shingles (dict): dictionary mapping each document to a list of shingles
+        doc2shingles (dict): dictionay mapping each document to a list of shinglesr
         hash_functions (list): list of hash functions
 
     Returns:
@@ -172,19 +205,47 @@ def lsh(signatures, b, r):
 
 
 if __name__ == "__main__":
-    # 1: Shingling
+    # Shingling
     K = 2
     shingles = get_shingles(K=K)
-    doc2shingles = build_doc2shingles(shingles, K=K)
+    train_doc2shingles, train_doc2labels, valid_doc2shingles, valid_doc2labels = build_doc2shingles(shingles, K=K)
 
-    # 2: Min-Hashing
-    M = 100
-    N = len(shingles)
-    primes = generate_prime_numbers(M, N)
-    hash_functions = [Hash(M, N, p) for p in primes]
-    signatures = min_hash(doc2shingles, hash_functions)
+    # Compare all pairs of train files and valid files
+    sim_dict = defaultdict(list)
+    for t_idx in trange(len(train_doc2shingles)):
+        for v_idx in range(len(valid_doc2shingles)):
+            true_sim = jaccard_similarity(set(train_doc2shingles[t_idx]), set(valid_doc2shingles[v_idx]))
+            sim_dict[v_idx].append((t_idx, true_sim))
+
+    f = open("sim_results.log", "w")
+    num_correct = 0
+    for v_idx, sim_list in sim_dict.items():
+        ground_truth = valid_doc2labels[v_idx]
+        prediction = []
+        f.write(f"Valid Label: {ground_truth}\n")
+        for t_idx, true_sim in sorted(sim_list, key=lambda tup: tup[1], reverse=True)[:5]:
+            if true_sim > 0.5:
+            f.write(f"Pred: {train_doc2labels[t_idx]}\tSim: {true_sim}\n")
+                prediction += train_doc2labels[t_idx]
+
+        if len(prediction) == 0:
+            prediction.append('-')
+            
+        if set(prediction) == set(ground_truth):
+            num_correct += 1
+
+    print(num_correct)
+    print(num_correct / len(valid_doc2shingles))
+    f.close()
+
+    # # 2: Min-Hashing
+    # M = 100
+    # N = len(shingles)
+    # primes = generate_prime_numbers(M, N)
+    # hash_functions = [Hash(M, N, p) for p in primes]
+    # signatures = min_hash(doc2shingles, hash_functions)
     
-    # 3: Locality-Sensitive Hashing
-    b = 10
-    candidate_pairs = lsh(signatures, b, M // b)
+    # # 3: Locality-Sensitive Hashing
+    # b = 10
+    # candidate_pairs = lsh(signatures, b, M // b)
     
