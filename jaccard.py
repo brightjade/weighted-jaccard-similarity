@@ -6,7 +6,7 @@ from utils import *
 
 if __name__ == "__main__":
     ### HYPERPARAMETERS ###
-    K = 4
+    K = 2
     sim_threshold = 0.3
 
     # Shingling
