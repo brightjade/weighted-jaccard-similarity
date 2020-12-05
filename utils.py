@@ -6,18 +6,6 @@ import matplotlib.pyplot as plt
 from tqdm import tqdm, trange
 
 
-def calculate_approx_F1(ground_truth, prediction):
-    prec = (1+(prediction*ground_truth).sum())/(1+ground_truth.sum())
-    recall = (1+(prediction*ground_truth).sum())/(1+prediction.sum())
-    return 2*prec*recall/(prec+recall)
-
-
-def calculate_F1(ground_truth, prediction):
-    prec = (1+len(set(prediction)&set(ground_truth)))/(1+len(set(prediction)))
-    recall = (1+len(set(prediction)&set(ground_truth)))/(1+len(set(ground_truth)))
-    return 2*prec*recall/(prec+recall)
-
-
 def jaccard_similarity(s1, s2):
     """Compute Jaccard Similarity between two sets.
 
@@ -72,7 +60,12 @@ def build_doc2shingles(shingles, K):
         K (int): length of shingle
 
     Returns:
-        doc2shingles (dict): dictionary mapping each document to a list of shingles
+        train_doc2shingles (dict): dictionary mapping each training document to a list of shingles
+        train_doc2labels   (dict): dictionary mapping each training document to a set of labels
+        valid_doc2shingles (dict): dictionary mapping each validation document to a list of shingles
+        valid_doc2labels   (dict): dictionary mapping each validation document to a set of labels
+        test_doc2shingles  (dict): dictionary mapping each test document to a list of shingles
+        label2shingles     (dict): dictionary mapping each label to a set of shingles
     """
     train_doc2shingles = defaultdict(list)
     valid_doc2shingles = defaultdict(list)
@@ -126,7 +119,17 @@ def build_doc2shingles(shingles, K):
 
 
 def build_union_intersection_matrices(doc2shingles1, doc2shingles2, label2shingles):
-    
+    """Build union and intersection matrices between inferring and training shingles.
+
+    Args:
+        doc2shingles1 (dict): training shingles 
+        doc2shingles2 (dict): inferring shingles
+        label2shingles (dict): dictionary mapping each label to a set of shingles
+
+    Returns:
+        union_matrices (torch.Tensor): union matrix of size (#infer_shingles, #train_shingles, #classes)
+        intersection_matrices (torch.Tensor): intersection matrix of size (#infer_shingles, #train_shingles, #classes)
+    """
     union_matrices = []
     intersection_matrices = []
     train_matrix = []
@@ -197,6 +200,18 @@ def convert_labels_to_ids(con_types):
         ids[0] = 0
 
     return ids
+
+
+def calculate_approx_F1(ground_truth, prediction):
+    prec = (1+(prediction*ground_truth).sum())/(1+ground_truth.sum())
+    recall = (1+(prediction*ground_truth).sum())/(1+prediction.sum())
+    return 2*prec*recall/(prec+recall)
+
+
+def calculate_F1(ground_truth, prediction):
+    prec = (1+len(set(prediction)&set(ground_truth)))/(1+len(set(prediction)))
+    recall = (1+len(set(prediction)&set(ground_truth)))/(1+len(set(ground_truth)))
+    return 2*prec*recall/(prec+recall)
 
 
 def plot_values(train_values, val_values, title):

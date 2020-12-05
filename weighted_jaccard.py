@@ -16,45 +16,13 @@ class SimpleNN(nn.Module):
         return self.weight*x
 
 
-if __name__ == "__main__":
-    ### HYPERPARAMETERS ###
-    K = 2
-    sim_threshold = 0.6
-    num_epochs = 100
-    learning_rate = 1e-2
-
-    # Shingling
-    if os.path.exists(f"{K}-shingles.pt"):
-        print("Loading cached shingles...")
-        shingles = torch.load(f"{K}-shingles.pt")
-        train_doc2shingles, train_doc2labels, valid_doc2shingles, valid_doc2labels, test_doc2shingles, label2shingles = shingles
-    else:
-        shingles = get_shingles(K)
-        train_doc2shingles, train_doc2labels, valid_doc2shingles, valid_doc2labels, test_doc2shingles, label2shingles = build_doc2shingles(shingles, K)
-        _save = [train_doc2shingles, train_doc2labels, valid_doc2shingles, valid_doc2labels, test_doc2shingles, label2shingles]
-        torch.save(_save, f"{K}-shingles.pt")
-
-    # Build union & intersection matrices for jaccard
-    if os.path.exists(f"{K}-union_intersection_matrices.pt"):
-        print("Loading cached union and intersection matrices...")
-        matrices = torch.load(f"{K}-union_intersection_matrices.pt")
-        train_union_matrices, train_intersection_matrices, valid_union_matrices, valid_intersection_matrices, test_union_matrices, test_intersection_matrices = matrices
-    else:
-        train_union_matrices, train_intersection_matrices = build_union_intersection_matrices(train_doc2shingles, train_doc2shingles, label2shingles)
-        valid_union_matrices, valid_intersection_matrices = build_union_intersection_matrices(train_doc2shingles, valid_doc2shingles, label2shingles)
-        test_union_matrices, test_intersection_matrices = build_union_intersection_matrices(train_doc2shingles, test_doc2shingles, label2shingles)
-        _save = [train_union_matrices, train_intersection_matrices, valid_union_matrices, valid_intersection_matrices, test_union_matrices, test_intersection_matrices]
-        torch.save(_save, f"{K}-union_intersection_matrices.pt")
-
-    # Load model & optimizer
-    model = SimpleNN()
+def train(model):
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
     train_losses, approx_F1_scores, train_F1_scores, valid_F1_scores = [], [], [], []
+    best_epoch, highest_F1 = -1, 0
     f = open(f"weighted_jaccard_{sim_threshold}_{learning_rate}_F1.log", "w")
     f2 = open(f"weighted_jaccard_{sim_threshold}_{learning_rate}.log", "w")
-    highest_epoch, highest_F1 = -1, 0
 
-    # Train jaccard weights
     for epoch in trange(num_epochs, desc="Epoch"):
         train_doc2sim, train_doc2score = {}, {}
         train_A, train_B = 0, 0
@@ -73,7 +41,7 @@ if __name__ == "__main__":
             train_doc2sim[t_idx] = weighted_sim
             train_doc2score[t_idx] = weighted_sim.sum(dim=1)
         
-        # 
+        # for each training 
         for t_idx in train_doc2score.keys():
             # Find all document pairs with t_idx whose similarity > threshold and whose not
             mask = train_doc2score[t_idx] >= sim_threshold
@@ -116,7 +84,7 @@ if __name__ == "__main__":
         train_weighted_F1 = 0.5 * (train_scores_dict['Real_F1_B']/train_B + train_scores_dict['Real_F1_A']/train_A)
         approx_F1_scores.append(approx_F1)
         train_F1_scores.append(train_weighted_F1)
-        print('Approx:', approx_F1, 'Real:', train_weighted_F1)
+        # print('Approx:', approx_F1, 'Real:', train_weighted_F1)
         f.write(f"Approx F1: {approx_F1}\tReal F1: {train_weighted_F1}\n")
         # print(list(model.parameters()))
 
@@ -127,7 +95,7 @@ if __name__ == "__main__":
         optimizer.step()
 
         ### VALIDATION MODE ###
-        valid_doc2sim, valid_doc2score = {}, {}
+        valid_doc2score = {}
         valid_A, valid_B = 0, 0
         valid_scores_dict = defaultdict(float)
         model.eval()
@@ -137,7 +105,6 @@ if __name__ == "__main__":
                 union = model(valid_union_matrices[v_idx].float())
                 intersection = model(valid_intersection_matrices[v_idx].float())
                 weighted_sim = intersection / union.sum(dim=1, keepdim=True)
-                valid_doc2sim[v_idx] = weighted_sim
                 valid_doc2score[v_idx] = weighted_sim.sum(dim=1)
 
             f2.write(f"Epoch: {epoch}\n")
@@ -167,12 +134,79 @@ if __name__ == "__main__":
         valid_weighted_F1 = 0.5 * (valid_scores_dict['Real_F1_B']/valid_B + valid_scores_dict['Real_F1_A']/valid_A)
         if valid_weighted_F1 > highest_F1:
             highest_F1 = valid_weighted_F1
-            highest_epoch = epoch
+            best_epoch = epoch
+            torch.save(model.state_dict(), "best_model.pt")
         valid_F1_scores.append(valid_weighted_F1)
-        print("Validation F1:", valid_weighted_F1)
+        # print("Validation F1:", valid_weighted_F1)
         f.write(f"Validation F1: {valid_weighted_F1}\n")
 
-    f.write(f"Epoch: {highest_epoch}\tHighest F1: {highest_F1}\n")
+    f.write(f"Epoch: {best_epoch}\tHighest F1: {highest_F1}\n")
     f.close()
     f2.close()
     plot_values(train_F1_scores, valid_F1_scores, f"f1_scores_{sim_threshold}_{learning_rate}")
+
+
+if __name__ == "__main__":
+    ### HYPERPARAMETERS ###
+    K = 2
+    sim_threshold = 0.6
+    num_epochs = 30
+    learning_rate = 1e-1
+    training = True
+
+    # Shingling
+    if os.path.exists(f"{K}-shingles.pt"):
+        print("Loading cached shingles...")
+        shingles = torch.load(f"{K}-shingles.pt")
+        train_doc2shingles, train_doc2labels, valid_doc2shingles, valid_doc2labels, test_doc2shingles, label2shingles = shingles
+    else:
+        shingles = get_shingles(K)
+        train_doc2shingles, train_doc2labels, valid_doc2shingles, valid_doc2labels, test_doc2shingles, label2shingles = build_doc2shingles(shingles, K)
+        _save = [train_doc2shingles, train_doc2labels, valid_doc2shingles, valid_doc2labels, test_doc2shingles, label2shingles]
+        torch.save(_save, f"{K}-shingles.pt")
+
+    # Build union & intersection matrices for jaccard
+    if os.path.exists(f"{K}-union_intersection_matrices.pt"):
+        print("Loading cached union and intersection matrices...")
+        matrices = torch.load(f"{K}-union_intersection_matrices.pt")
+        train_union_matrices, train_intersection_matrices, valid_union_matrices, valid_intersection_matrices, test_union_matrices, test_intersection_matrices = matrices
+    else:
+        train_union_matrices, train_intersection_matrices = build_union_intersection_matrices(train_doc2shingles, train_doc2shingles, label2shingles)
+        valid_union_matrices, valid_intersection_matrices = build_union_intersection_matrices(train_doc2shingles, valid_doc2shingles, label2shingles)
+        test_union_matrices, test_intersection_matrices = build_union_intersection_matrices(train_doc2shingles, test_doc2shingles, label2shingles)
+        _save = [train_union_matrices, train_intersection_matrices, valid_union_matrices, valid_intersection_matrices, test_union_matrices, test_intersection_matrices]
+        torch.save(_save, f"{K}-union_intersection_matrices.pt")
+
+    # Load model
+    model = SimpleNN()
+    if os.path.exists("best_model.pt"):
+        print("Loading cached weights...")
+    else:
+        train(model)
+    
+    model.load_state_dict(torch.load("best_model.pt"))
+
+    # Create test answers
+    if not os.path.exists('test_answer'):
+        os.makedirs('test_answer')
+    test_doc2score = {}
+    model.eval()
+    with torch.no_grad():
+        for t_idx in range(len(test_doc2shingles)):
+            union = model(test_union_matrices[t_idx].float())
+            intersection = model(test_intersection_matrices[t_idx].float())
+            weighted_sim = intersection / union.sum(dim=1, keepdim=True)
+            test_doc2score[t_idx] = weighted_sim.sum(dim=1)
+    
+        for t_idx in test_doc2score.keys():
+            mask = test_doc2score[t_idx] > sim_threshold
+            pred_indices = [x.item() for x in torch.where(mask == True)[0]]
+            preds = set()
+            for idx in pred_indices:
+                pred = train_doc2labels[idx]
+                if '-' not in pred:     # only predict attacks, not '-'
+                    preds.update(pred)
+
+            with open(f"./test_answer/test_answer_{t_idx:03}.txt", "w") as f:
+                if len(preds) > 0:
+                    f.write('\t'.join(preds))            
